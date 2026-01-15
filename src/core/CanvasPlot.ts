@@ -38,15 +38,15 @@ export class CanvasPlot {
   render() {
     const { displayWidth, displayHeight, dpr } = resizeCanvasToDisplaySize(this.canvas);
   
-    // Rysujemy w jednostkach CSS px, ale w ostrej rozdzielczości DPR.
+    // Drawing scale for high-DPI screens
     this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   
-    // tło
+    // background
     this.ctx.clearRect(0, 0, displayWidth, displayHeight);
     this.ctx.fillStyle = this.options.background;
     this.ctx.fillRect(0, 0, displayWidth, displayHeight);
   
-    // --- dane ---
+    // data
     const data = (window as any).andaData as { x_tab: number[]; y_tab: number[] } | undefined;
     if (!data?.x_tab?.length || !data?.y_tab?.length) return;
   
@@ -68,7 +68,7 @@ export class CanvasPlot {
     const dx = (xmax - xmin) || 1;
     const dy = (ymax - ymin) || 1;
   
-    // --- podział na obszary ---
+    // --- divide to areas ---
     const marginLeft = 100;
     const marginBottom = 50;
     const marginTop = 10;
@@ -95,23 +95,23 @@ export class CanvasPlot {
       h: marginBottom,
     };
   
-    // mapowanie danych -> plotArea
+    // map data coords to pixel coords in plotArea
     const xToPx = (x: number) => plotArea.x + ((x - xmin) / dx) * plotArea.w;
     const yToPx = (y: number) => plotArea.y + (1 - (y - ymin) / dy) * plotArea.h;
   
-    // --- osie: ramka obszaru wykresu (na razie wystarczy) ---
+    // --- axes ---
     const ctx = this.ctx;
     ctx.strokeStyle = "#666";
     ctx.lineWidth = 1;
     ctx.strokeRect(plotArea.x, plotArea.y, plotArea.w, plotArea.h);
   
-    // --- ticki + etykiety ---
+    // ticks and labels
     const ticks: number = 5;
     const tickLen = 6;
   
-    // format liczb (prosty, ale praktyczny)
+    // number formatting
     const fmt = (v: number, span: number) => {
-      // heurystyka: dla małych zakresów pokaż więcej miejsc po przecinku
+      // for very large/small spans use exponential
       const absSpan = Math.abs(span);
       if (absSpan >= 1e6) return v.toExponential(3);
       if (absSpan >= 1e3) return v.toFixed(2);
@@ -191,8 +191,6 @@ export class CanvasPlot {
     }
     if (started) ctx.stroke();
   }
-  
-
 
   destroy() {
     this.ro?.disconnect();

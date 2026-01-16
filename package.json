@@ -5,18 +5,9 @@
   "main": "dist/index.js",
   "scripts": {
     "build": "tsup src/index.ts --format esm --dts --sourcemap --clean",
-    "postbuild": "cp -f dist/index.js ../backend/static/lib/tsplot/dist/index.js && cp -f dist/index.js.map ../backend/static/lib/tsplot/dist/index.js.map",
-    "watch": "tsc -p tsconfig.json --watch",
-    "copy:django": "cp -f dist/index.js ../backend/static/lib/tsplot/dist/index.js",
-    "copy:django:watch": "chokidar \"dist/index.js\" -c \"npm run copy:django\"",
     "dev": "tsup src/index.ts --format esm --dts --sourcemap --watch"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
-  "description": "",
   "devDependencies": {
-    "chokidar-cli": "^3.0.0",
     "tsup": "^8.5.1",
     "typescript": "^5.9.3"
   }

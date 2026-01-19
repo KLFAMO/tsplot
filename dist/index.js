@@ -89,24 +89,27 @@ var CanvasPlot = class {
     this.ctx.clearRect(0, 0, displayWidth, displayHeight);
     this.ctx.fillStyle = this.options.background;
     this.ctx.fillRect(0, 0, displayWidth, displayHeight);
-    if (!this.data || !this.data.segments?.length) return;
-    const seg0 = this.data.segments[0];
-    const x_tab = seg0.mjd;
-    const y_tab = seg0.val;
-    if (!x_tab?.length || !y_tab?.length) return;
-    const n = Math.min(x_tab.length, y_tab.length);
-    if (n < 2) return;
+    const segments = this.data?.segments;
+    if (!segments || segments.length === 0) return;
     let xmin = Infinity, xmax = -Infinity, ymin = Infinity, ymax = -Infinity;
-    for (let i = 0; i < n; i++) {
-      const x = x_tab[i];
-      const y = y_tab[i];
-      if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
-      if (x < xmin) xmin = x;
-      if (x > xmax) xmax = x;
-      if (y < ymin) ymin = y;
-      if (y > ymax) ymax = y;
+    let haveAnyPoint = false;
+    for (const seg of segments) {
+      const x_tab = seg?.mjd;
+      const y_tab = seg?.val;
+      if (!Array.isArray(x_tab) || !Array.isArray(y_tab)) continue;
+      const n = Math.min(x_tab.length, y_tab.length);
+      for (let i = 0; i < n; i++) {
+        const x = x_tab[i];
+        const y = y_tab[i];
+        if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
+        haveAnyPoint = true;
+        if (x < xmin) xmin = x;
+        if (x > xmax) xmax = x;
+        if (y < ymin) ymin = y;
+        if (y > ymax) ymax = y;
+      }
     }
-    if (!Number.isFinite(xmin) || !Number.isFinite(xmax) || !Number.isFinite(ymin) || !Number.isFinite(ymax)) return;
+    if (!haveAnyPoint) return;
     const dx = xmax - xmin || 1;
     const dy = ymax - ymin || 1;
     const marginLeft = 100;
@@ -159,9 +162,7 @@ var CanvasPlot = class {
       ctx.lineTo(xPx, plotArea.y + plotArea.h + tickLen);
       ctx.strokeStyle = "#444";
       ctx.stroke();
-      const label = fmt(xVal, dx);
-      const labelY = bottomArea.y + 6;
-      ctx.fillText(label, xPx, labelY);
+      ctx.fillText(fmt(xVal, dx), xPx, bottomArea.y + 6);
     }
     ctx.textAlign = "right";
     ctx.textBaseline = "middle";
@@ -174,28 +175,36 @@ var CanvasPlot = class {
       ctx.lineTo(plotArea.x, yPx);
       ctx.strokeStyle = "#444";
       ctx.stroke();
-      const label = fmt(yVal, dy);
-      const labelX = leftArea.x + leftArea.w - 6;
-      ctx.fillText(label, labelX, yPx);
+      ctx.fillText(fmt(yVal, dy), leftArea.x + leftArea.w - 6, yPx);
     }
     ctx.strokeStyle = "#111";
     ctx.lineWidth = 1;
-    let started = false;
-    ctx.beginPath();
-    for (let i = 0; i < n; i++) {
-      const x = x_tab[i];
-      const y = y_tab[i];
-      if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
-      const px = xToPx(x);
-      const py = yToPx(y);
-      if (!started) {
-        ctx.moveTo(px, py);
-        started = true;
-      } else {
-        ctx.lineTo(px, py);
+    for (const seg of segments) {
+      const x_tab = seg?.mjd;
+      const y_tab = seg?.val;
+      if (!Array.isArray(x_tab) || !Array.isArray(y_tab)) continue;
+      const n = Math.min(x_tab.length, y_tab.length);
+      if (n < 2) continue;
+      let started = false;
+      ctx.beginPath();
+      for (let i = 0; i < n; i++) {
+        const x = x_tab[i];
+        const y = y_tab[i];
+        if (!Number.isFinite(x) || !Number.isFinite(y)) {
+          started = false;
+          continue;
+        }
+        const px = xToPx(x);
+        const py = yToPx(y);
+        if (!started) {
+          ctx.moveTo(px, py);
+          started = true;
+        } else {
+          ctx.lineTo(px, py);
+        }
       }
+      if (started) ctx.stroke();
     }
-    if (started) ctx.stroke();
   }
   destroy() {
     this.ro?.disconnect();

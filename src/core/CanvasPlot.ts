@@ -55,89 +55,83 @@ export class CanvasPlot {
 
   render() {
     const { displayWidth, displayHeight, dpr } = resizeCanvasToDisplaySize(this.canvas);
-
-    // rysujemy w jednostkach CSS px, ale w ostrej rozdzielczości DPR
     this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-
-    // tło
     this.ctx.clearRect(0, 0, displayWidth, displayHeight);
+  
+    // tło
     this.ctx.fillStyle = this.options.background;
     this.ctx.fillRect(0, 0, displayWidth, displayHeight);
-
-    // [CHANGED] dane bierzemy z this.data, nie z window.andaData
-    if (!this.data || !this.data.segments?.length) return;
-
-    const seg0 = this.data.segments[0];
-    const x_tab = seg0.mjd;
-    const y_tab = seg0.val;
-
-    if (!x_tab?.length || !y_tab?.length) return;
-
-    const n = Math.min(x_tab.length, y_tab.length);
-    if (n < 2) return;
-
-    // zakresy
-    let xmin = Infinity,
-      xmax = -Infinity,
-      ymin = Infinity,
-      ymax = -Infinity;
-
-    for (let i = 0; i < n; i++) {
-      const x = x_tab[i];
-      const y = y_tab[i];
-      if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
-      if (x < xmin) xmin = x;
-      if (x > xmax) xmax = x;
-      if (y < ymin) ymin = y;
-      if (y > ymax) ymax = y;
+  
+    const segments = this.data?.segments;
+    if (!segments || segments.length === 0) return;
+  
+    // 1) Globalne min/max po wszystkich segmentach
+    let xmin = Infinity, xmax = -Infinity, ymin = Infinity, ymax = -Infinity;
+    let haveAnyPoint = false;
+  
+    for (const seg of segments) {
+      const x_tab = seg?.mjd;
+      const y_tab = seg?.val;
+      if (!Array.isArray(x_tab) || !Array.isArray(y_tab)) continue;
+  
+      const n = Math.min(x_tab.length, y_tab.length);
+      for (let i = 0; i < n; i++) {
+        const x = x_tab[i];
+        const y = y_tab[i];
+        if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
+        haveAnyPoint = true;
+        if (x < xmin) xmin = x;
+        if (x > xmax) xmax = x;
+        if (y < ymin) ymin = y;
+        if (y > ymax) ymax = y;
+      }
     }
-
-    if (!Number.isFinite(xmin) || !Number.isFinite(xmax) || !Number.isFinite(ymin) || !Number.isFinite(ymax)) return;
-
+  
+    if (!haveAnyPoint) return;
+  
     const dx = (xmax - xmin) || 1;
     const dy = (ymax - ymin) || 1;
-
-    // marginesy
+  
+    // layout (zostawiam jak było)
     const marginLeft = 100;
     const marginBottom = 50;
     const marginTop = 10;
     const marginRight = 10;
-
+  
     const plotArea = {
       x: marginLeft,
       y: marginTop,
       w: Math.max(1, displayWidth - marginLeft - marginRight),
-      h: Math.max(1, displayHeight - marginTop - marginBottom),
+      h: Math.max(1, displayHeight - marginTop - marginBottom)
     };
-
+  
     const leftArea = {
       x: 0,
       y: marginTop,
       w: marginLeft,
-      h: plotArea.h,
+      h: plotArea.h
     };
-
+  
     const bottomArea = {
       x: marginLeft,
       y: plotArea.y + plotArea.h,
       w: plotArea.w,
-      h: marginBottom,
+      h: marginBottom
     };
-
-    // mapowanie danych -> plotArea
+  
     const xToPx = (x: number) => plotArea.x + ((x - xmin) / dx) * plotArea.w;
-    const yToPx = (y: number) => plotArea.y + (1 - (y - ymin) / dy) * plotArea.h;
-
-    // ramka
+    const yToPx = (y: number) => plotArea.y + (1 - ((y - ymin) / dy)) * plotArea.h;
+  
     const ctx = this.ctx;
+  
+    // ramka
     ctx.strokeStyle = "#666";
     ctx.lineWidth = 1;
     ctx.strokeRect(plotArea.x, plotArea.y, plotArea.w, plotArea.h);
-
-    // ticki + etykiety
+  
+    // osie (jak było)
     let ticks = 5;
     const tickLen = 6;
-
     const fmt = (v: number, span: number) => {
       const absSpan = Math.abs(span);
       if (absSpan >= 1e6) return v.toExponential(3);
@@ -145,71 +139,84 @@ export class CanvasPlot {
       if (absSpan >= 1) return v.toFixed(4);
       return v.toExponential(3);
     };
-
+  
     ctx.fillStyle = "#222";
     ctx.font = "12px sans-serif";
-
-    // X
+  
+    // X ticks
     ctx.textAlign = "center";
     ctx.textBaseline = "top";
     for (let i = 0; i < ticks; i++) {
-      const t = (ticks === 1) ? 0 : i / (ticks - 1);
+      const t = ticks === 1 ? 0 : i / (ticks - 1);
       const xVal = xmin + t * dx;
       const xPx = plotArea.x + t * plotArea.w;
-
+  
       ctx.beginPath();
       ctx.moveTo(xPx, plotArea.y + plotArea.h);
       ctx.lineTo(xPx, plotArea.y + plotArea.h + tickLen);
       ctx.strokeStyle = "#444";
       ctx.stroke();
-
-      const label = fmt(xVal, dx);
-      const labelY = bottomArea.y + 6;
-      ctx.fillText(label, xPx, labelY);
+  
+      ctx.fillText(fmt(xVal, dx), xPx, bottomArea.y + 6);
     }
-
-    // Y
+  
+    // Y ticks
     ctx.textAlign = "right";
     ctx.textBaseline = "middle";
     for (let i = 0; i < ticks; i++) {
-      const t = (ticks === 1) ? 0 : i / (ticks - 1);
+      const t = ticks === 1 ? 0 : i / (ticks - 1);
       const yVal = ymin + t * dy;
       const yPx = plotArea.y + (1 - t) * plotArea.h;
-
+  
       ctx.beginPath();
       ctx.moveTo(plotArea.x - tickLen, yPx);
       ctx.lineTo(plotArea.x, yPx);
       ctx.strokeStyle = "#444";
       ctx.stroke();
-
-      const label = fmt(yVal, dy);
-      const labelX = leftArea.x + leftArea.w - 6;
-      ctx.fillText(label, labelX, yPx);
+  
+      ctx.fillText(fmt(yVal, dy), leftArea.x + leftArea.w - 6, yPx);
     }
-
-    // krzywa
-    ctx.strokeStyle = "#111";
+  
+    // 2) Rysowanie wszystkich segmentów jako jeden „wykres z przerwami”
+    //    (przerwy wynikają z tego, że każdy segment to osobna ścieżka)
+    ctx.strokeStyle = "#111";   // jeden kolor
     ctx.lineWidth = 1;
-
-    let started = false;
-    ctx.beginPath();
-    for (let i = 0; i < n; i++) {
-      const x = x_tab[i];
-      const y = y_tab[i];
-      if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
-
-      const px = xToPx(x);
-      const py = yToPx(y);
-
-      if (!started) {
-        ctx.moveTo(px, py);
-        started = true;
-      } else {
-        ctx.lineTo(px, py);
+  
+    for (const seg of segments) {
+      const x_tab = seg?.mjd;
+      const y_tab = seg?.val;
+      if (!Array.isArray(x_tab) || !Array.isArray(y_tab)) continue;
+  
+      const n = Math.min(x_tab.length, y_tab.length);
+      if (n < 2) continue;
+  
+      let started = false;
+      ctx.beginPath();
+  
+      for (let i = 0; i < n; i++) {
+        const x = x_tab[i];
+        const y = y_tab[i];
+        if (!Number.isFinite(x) || !Number.isFinite(y)) {
+          // jeśli w segmencie pojawi się dziura, rozbijamy ścieżkę
+          started = false;
+          continue;
+        }
+  
+        const px = xToPx(x);
+        const py = yToPx(y);
+  
+        if (!started) {
+          ctx.moveTo(px, py);
+          started = true;
+        } else {
+          ctx.lineTo(px, py);
+        }
       }
+  
+      if (started) ctx.stroke();
     }
-    if (started) ctx.stroke();
   }
+  
 
   destroy() {
     this.ro?.disconnect();

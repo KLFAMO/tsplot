@@ -92,6 +92,119 @@ export class CanvasPlot {
     const dx = (xmax - xmin) || 1;
     const dy = (ymax - ymin) || 1;
   
+    // --- [NEW] globalny obszar liniowy robust z wagami i odrzucaniem segmentów pikowych ---
+    // - segmenty "pikowe" (duży spike_fraction) nie wpływają na pasmo
+    // - typowy center i width liczone ważoną medianą (waga ~ sqrt(n))
+    // - globalLow/globalHigh liczone ważonymi percentylami (np. 5% i 95%), nie min/max
+
+    type BandItem = {
+      center: number;
+      width: number;      // pad * linthresh
+      low: number;
+      high: number;
+      w: number;          // waga
+      spike: number;      // spike_fraction
+    };
+
+    const pad = 2;
+    const items: BandItem[] = [];
+
+    for (const seg of segments) {
+      const yStats = (seg as any)?.stats?.y;
+      if (!yStats) continue;
+
+      const center = yStats.center;
+      const linthresh = yStats.linthresh;
+      const spike = yStats.spike_fraction;
+      const n = yStats.n;
+
+      if (!Number.isFinite(center) || !Number.isFinite(linthresh)) continue;
+      if (!Number.isFinite(spike)) continue;
+      if (!Number.isFinite(n) || n <= 0) continue;
+
+      const width = pad * linthresh;
+      const low = center - width;
+      const high = center + width;
+
+      // waga: sqrt(n) jest stabilna (n bywa gigantyczne)
+      const w = Math.sqrt(n);
+
+      items.push({ center, width, low, high, w, spike });
+    }
+
+    function weightedMedian(values: number[], weights: number[]): number {
+      const arr = values.map((v, i) => ({ v, w: weights[i] }))
+        .filter((a) => Number.isFinite(a.v) && Number.isFinite(a.w) && a.w > 0)
+        .sort((a, b) => a.v - b.v);
+
+      const total = arr.reduce((s, a) => s + a.w, 0);
+      let acc = 0;
+      for (const a of arr) {
+        acc += a.w;
+        if (acc >= 0.5 * total) return a.v;
+      }
+      return arr.length ? arr[arr.length - 1].v : NaN;
+    }
+
+    // q w [0..1]
+    function weightedQuantile(values: number[], weights: number[], q: number): number {
+      const arr = values.map((v, i) => ({ v, w: weights[i] }))
+        .filter((a) => Number.isFinite(a.v) && Number.isFinite(a.w) && a.w > 0)
+        .sort((a, b) => a.v - b.v);
+
+      const total = arr.reduce((s, a) => s + a.w, 0);
+      const target = q * total;
+      let acc = 0;
+      for (const a of arr) {
+        acc += a.w;
+        if (acc >= target) return a.v;
+      }
+      return arr.length ? arr[arr.length - 1].v : NaN;
+    }
+
+    let globalLow = Infinity;
+    let globalHigh = -Infinity;
+    let haveGlobalBand = false;
+
+    if (items.length > 0) {
+      // 1) odrzuć segmenty bardzo pikowe (niech nie wpływają na pasmo)
+      const spikeMax = 0.20; // startowo 0.2, dostrój wg danych
+      const good = items.filter((it) => it.spike <= spikeMax);
+
+      const base = good.length >= 3 ? good : items; // fallback: jakby wszystko odpadło
+
+      const centers = base.map((it) => it.center);
+      const widths = base.map((it) => it.width);
+      const ws = base.map((it) => it.w);
+
+      const C = weightedMedian(centers, ws);
+      const W = weightedMedian(widths, ws);
+      const Wsafe = Math.max(1e-12, W);
+
+      // 2) inliery: center blisko typowego (3×typowa szerokość)
+      const thr = 3 * Wsafe;
+      const inliers = base.filter((it) => Math.abs(it.center - C) <= thr);
+
+      const used = inliers.length >= 2 ? inliers : base;
+
+      // 3) global band: ważone percentyle low/high (stabilniejsze niż min/max)
+      const lows = used.map((it) => it.low);
+      const highs = used.map((it) => it.high);
+      const wUsed = used.map((it) => it.w);
+
+      globalLow = weightedQuantile(lows, wUsed, 0.05);
+      globalHigh = weightedQuantile(highs, wUsed, 0.95);
+
+      haveGlobalBand = Number.isFinite(globalLow) && Number.isFinite(globalHigh) && (globalHigh > globalLow);
+    }
+
+    if (!haveGlobalBand) {
+      globalLow = ymin;
+      globalHigh = ymax;
+    }
+    // --- [/NEW] koniec globalnego pasma liniowego ---
+
+
     // layout (zostawiam jak było)
     const marginLeft = 100;
     const marginBottom = 50;
@@ -120,7 +233,35 @@ export class CanvasPlot {
     };
   
     const xToPx = (x: number) => plotArea.x + ((x - xmin) / dx) * plotArea.w;
-    const yToPx = (y: number) => plotArea.y + (1 - ((y - ymin) / dy)) * plotArea.h;
+
+    // --- [NEW] hybrydowa oś Y: linear w [globalLow, globalHigh], symlog poza ---
+    const yCenter = 0.5 * (globalLow + globalHigh);
+
+    // Granica liniowości = dokładnie globalny pas
+    const L0 = Math.max(1e-12, 0.5 * (globalHigh - globalLow));
+
+    // Kompresja ogonów: <1 => ogony mniejsze, liniowy „większy” wizualnie
+    const tailCompress = 0.25; // spróbuj 0.5, ewentualnie 0.3
+    const logScale = L0 * tailCompress;
+
+    const yToT = (y: number) => {
+      const d = y - yCenter;
+      const ad = Math.abs(d);
+      if (ad <= L0) return d;
+      return Math.sign(d) * (L0 + Math.log10(ad / L0) * logScale);
+    };
+
+
+    const tMin = yToT(ymin);
+    const tMax = yToT(ymax);
+    const tSpan = (tMax - tMin) || 1;
+
+    const yToPx = (y: number) => {
+      const t = yToT(y);
+      const u = (t - tMin) / tSpan; // 0..1
+      return plotArea.y + (1 - u) * plotArea.h;
+    };
+
   
     const ctx = this.ctx;
   
@@ -128,6 +269,42 @@ export class CanvasPlot {
     ctx.strokeStyle = "#666";
     ctx.lineWidth = 1;
     ctx.strokeRect(plotArea.x, plotArea.y, plotArea.w, plotArea.h);
+
+    // --- [NEW] podświetlenie obszarów logarytmicznych (poza globalLow/globalHigh) ---
+    {
+      const yHighPx = yToPx(globalHigh); // górna granica pasma liniowego
+      const yLowPx = yToPx(globalLow);   // dolna granica pasma liniowego
+
+      // clamp do plotArea
+      const topY = plotArea.y;
+      const bottomY = plotArea.y + plotArea.h;
+
+      const yHighClamped = Math.min(Math.max(yHighPx, topY), bottomY);
+      const yLowClamped = Math.min(Math.max(yLowPx, topY), bottomY);
+
+      ctx.save();
+      ctx.fillStyle = "rgba(0,0,0,0.06)"; // lekko szary
+
+      // obszar nad pasmem (log górny)
+      const topH = Math.max(0, yHighClamped - topY);
+      if (topH > 0) {
+        ctx.fillRect(plotArea.x, topY, plotArea.w, topH);
+      }
+
+      // obszar pod pasmem (log dolny)
+      const bottomH = Math.max(0, bottomY - yLowClamped);
+      if (bottomH > 0) {
+        ctx.fillRect(plotArea.x, yLowClamped, plotArea.w, bottomH);
+      }
+
+      ctx.restore();
+
+      // ramka jeszcze raz, żeby nie zszarzała krawędź
+      ctx.strokeStyle = "#666";
+      ctx.lineWidth = 1;
+      ctx.strokeRect(plotArea.x, plotArea.y, plotArea.w, plotArea.h);
+    }
+
   
     // osie (jak było)
     let ticks = 5;
@@ -189,6 +366,52 @@ export class CanvasPlot {
   
       const n = Math.min(x_tab.length, y_tab.length);
       if (n < 2) continue;
+
+          // --- [NEW] progi liniowe (linear_low / linear_high) dla tego segmentu ---
+          const stats = (seg as any).stats;
+          const yStats = stats?.y;
+          const xStats = stats?.x;
+          
+          const center = yStats?.center;
+          const linthresh = yStats?.linthresh;
+          const segXmin = xStats?.min_mjd;
+          const segXmax = xStats?.max_mjd;
+          
+          if (
+            Number.isFinite(center) &&
+            Number.isFinite(linthresh) &&
+            Number.isFinite(segXmin) &&
+            Number.isFinite(segXmax)
+          ) {
+            const lin2 = 2 * linthresh;
+          
+            const low = center - lin2;
+            const high = center + lin2;
+          
+            const x0 = xToPx(segXmin);
+            const x1 = xToPx(segXmax);
+            const yLowPx = yToPx(low);
+            const yHighPx = yToPx(high);
+          
+            ctx.save();
+            ctx.strokeStyle = "#ff0000";
+            ctx.lineWidth = 1;
+            ctx.setLineDash([6, 4]);
+          
+            ctx.beginPath();
+            ctx.moveTo(x0, yLowPx);
+            ctx.lineTo(x1, yLowPx);
+            ctx.stroke();
+          
+            ctx.beginPath();
+            ctx.moveTo(x0, yHighPx);
+            ctx.lineTo(x1, yHighPx);
+            ctx.stroke();
+          
+            ctx.restore();
+          }
+          
+      // --- [/NEW] ---
   
       let started = false;
       ctx.beginPath();

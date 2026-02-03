@@ -52,7 +52,7 @@ function parseTimandaTsplotJson(raw) {
 }
 
 // src/core/CanvasPlot.ts
-var CanvasPlot = class {
+var CanvasPlot = class _CanvasPlot {
   canvas;
   ctx;
   ro = null;
@@ -83,6 +83,30 @@ var CanvasPlot = class {
     this.data = parsed;
     this.render();
   }
+  /**
+   * Fetch JSON from `url` and set it as the plot data.
+   * Convenience helper to keep calling code minimal.
+   */
+  async loadFromUrl(url) {
+    const resp = await fetch(url, { credentials: "same-origin" });
+    if (!resp.ok) throw new Error(`Failed to load ${url}: ${resp.status} ${resp.statusText}`);
+    const raw = await resp.json();
+    this.setData(raw);
+  }
+  /**
+   * Create a CanvasPlot from a canvas element or element id.
+   * Accepts either an `HTMLCanvasElement` or a string id.
+   */
+  static create(canvasOrId, options = {}) {
+    const canvas = typeof canvasOrId === "string" ? document.getElementById(canvasOrId) : canvasOrId;
+    if (!canvas) throw new Error("CanvasPlot.create: canvas element not found");
+    return new _CanvasPlot(canvas, options);
+  }
+  /**
+   * Attach a button to trigger loading data. `urlProvider` should return the URL to fetch.
+   * Optional `statusEl` will receive simple status messages.
+   */
+  // NOTE: UI helpers intentionally omitted from the library to keep it UI-agnostic.
   render() {
     const { displayWidth, displayHeight, dpr } = resizeCanvasToDisplaySize(this.canvas);
     this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);

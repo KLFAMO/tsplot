@@ -10,6 +10,20 @@ declare class CanvasPlot {
     constructor(canvas: HTMLCanvasElement, options?: CanvasPlotOptions);
     setOptions(partial: CanvasPlotOptions): void;
     setData(raw: unknown): void;
+    /**
+     * Fetch JSON from `url` and set it as the plot data.
+     * Convenience helper to keep calling code minimal.
+     */
+    loadFromUrl(url: string): Promise<void>;
+    /**
+     * Create a CanvasPlot from a canvas element or element id.
+     * Accepts either an `HTMLCanvasElement` or a string id.
+     */
+    static create(canvasOrId: string | HTMLCanvasElement, options?: CanvasPlotOptions): CanvasPlot;
+    /**
+     * Attach a button to trigger loading data. `urlProvider` should return the URL to fetch.
+     * Optional `statusEl` will receive simple status messages.
+     */
     render(): void;
     destroy(): void;
 }

@@ -19,6 +19,9 @@ export class CanvasPlot {
   // [NEW] Trzymamy pełne dane z timandy w bibliotece, nie w window ani w aplikacji
   private data: TimandaMtsV1 | null = null;
 
+  // Track last mouse event for 'v' key handler
+  private lastMouseEvent: MouseEvent | null = null;
+
   constructor(canvas: HTMLCanvasElement, options: CanvasPlotOptions = {}) {
     this.canvas = canvas;
 
@@ -34,6 +37,9 @@ export class CanvasPlot {
 
     this.ro = new ResizeObserver(() => this.render());
     this.ro.observe(this.canvas);
+
+    // Enable cursor tracking by default: press 'v' to log plot coordinates
+    this.enableCursorTracking(true);
 
     this.render();
   }
@@ -79,6 +85,185 @@ export class CanvasPlot {
    * Optional `statusEl` will receive simple status messages.
    */
   // NOTE: UI helpers intentionally omitted from the library to keep it UI-agnostic.
+
+  /**
+   * Enable cursor tracking: when 'v' key is pressed, log plot coordinates at current cursor position.
+   * This helps inspect data values at specific points. Logs to console.debug.
+   */
+  enableCursorTracking(enabled: boolean = true): void {
+    if (enabled) {
+      this.canvas.addEventListener("mousemove", (evt) => {
+        this.lastMouseEvent = evt;
+      });
+      document.addEventListener("keydown", (evt) => this.onKeyDown(evt));
+    }
+  }
+
+  private onKeyDown(evt: KeyboardEvent): void {
+    if (evt.key.toLowerCase() === "v" && this.lastMouseEvent) {
+      const coords = this.getPlotCoordinatesFromEvent(this.lastMouseEvent);
+      if (coords) {
+        console.debug(`tsplot cursor [v]: x=${coords.x.toFixed(6)}, y=${coords.y.toFixed(6)}`);
+      }
+    }
+  }
+
+  /**
+   * Convert screen pixel coordinates (from MouseEvent) to plot data units (x, y).
+   * Returns null if no data is loaded or click is outside plot area.
+   */
+  private getPlotCoordinatesFromEvent(evt: MouseEvent): { x: number; y: number } | null {
+    if (!this.data?.segments || this.data.segments.length === 0) return null;
+
+    const rect = this.canvas.getBoundingClientRect();
+    const screenX = evt.clientX - rect.left;
+    const screenY = evt.clientY - rect.top;
+
+    // Compute data ranges (same logic as in render())
+    let xmin = Infinity, xmax = -Infinity, ymin = Infinity, ymax = -Infinity;
+    for (const seg of this.data.segments) {
+      const x_tab = seg?.mjd;
+      const y_tab = seg?.val;
+      if (!Array.isArray(x_tab) || !Array.isArray(y_tab)) continue;
+      const n = Math.min(x_tab.length, y_tab.length);
+      for (let i = 0; i < n; i++) {
+        const x = x_tab[i];
+        const y = y_tab[i];
+        if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
+        if (x < xmin) xmin = x;
+        if (x > xmax) xmax = x;
+        if (y < ymin) ymin = y;
+        if (y > ymax) ymax = y;
+      }
+    }
+
+    if (!Number.isFinite(xmin) || !Number.isFinite(ymin)) return null;
+
+    const dx = (xmax - xmin) || 1;
+    const dy = (ymax - ymin) || 1;
+
+    // Compute global band (same logic as render())
+    const pad = 2;
+    let globalLow = ymin, globalHigh = ymax;
+    const items: any[] = [];
+    for (const seg of this.data.segments) {
+      const yStats = (seg as any)?.stats?.y;
+      if (!yStats) continue;
+      const center = yStats.center;
+      const linthresh = yStats.linthresh;
+      const spike = yStats.spike_fraction;
+      const n = yStats.n;
+      if (!Number.isFinite(center) || !Number.isFinite(linthresh)) continue;
+      if (!Number.isFinite(spike) || !Number.isFinite(n) || n <= 0) continue;
+      const width = pad * linthresh;
+      items.push({ center, width, low: center - width, high: center + width, w: Math.sqrt(n), spike });
+    }
+
+    if (items.length > 0) {
+      const spikeMax = 0.2;
+      const good = items.filter((it) => it.spike <= spikeMax);
+      const base = good.length >= 3 ? good : items;
+      const centers = base.map((it) => it.center);
+      const widths = base.map((it) => it.width);
+      const ws = base.map((it) => it.w);
+      const C = this.weightedMedian(centers, ws);
+      const W = this.weightedMedian(widths, ws);
+      const Wsafe = Math.max(1e-12, W);
+      const thr = 3 * Wsafe;
+      const inliers = base.filter((it) => Math.abs(it.center - C) <= thr);
+      const used = inliers.length >= 2 ? inliers : base;
+      const lows = used.map((it) => it.low);
+      const highs = used.map((it) => it.high);
+      const wUsed = used.map((it) => it.w);
+      globalLow = this.weightedQuantile(lows, wUsed, 0.05);
+      globalHigh = this.weightedQuantile(highs, wUsed, 0.95);
+    }
+
+    // Layout constants
+    const marginLeft = 100, marginBottom = 50, marginTop = 10, marginRight = 10;
+    const { displayWidth, displayHeight } = resizeCanvasToDisplaySize(this.canvas);
+    const plotArea = {
+      x: marginLeft,
+      y: marginTop,
+      w: Math.max(1, displayWidth - marginLeft - marginRight),
+      h: Math.max(1, displayHeight - marginTop - marginBottom),
+    };
+
+    // Check if click is inside plot area
+    if (screenX < plotArea.x || screenX > plotArea.x + plotArea.w ||
+        screenY < plotArea.y || screenY > plotArea.y + plotArea.h) {
+      return null;
+    }
+
+    // Convert screen px to plot units
+    const t = (screenX - plotArea.x) / plotArea.w;
+    const dataX = xmin + t * dx;
+
+    // Y-axis: reverse + symlog transform
+    const yCenter = 0.5 * (globalLow + globalHigh);
+    const L0 = Math.max(1e-12, 0.5 * (globalHigh - globalLow));
+    const tailCompress = 0.25;
+    const logScale = L0 * tailCompress;
+
+    const u = 1 - (screenY - plotArea.y) / plotArea.h;
+    const tMin = this.yToT(ymin, yCenter, L0, logScale);
+    const tMax = this.yToT(ymax, yCenter, L0, logScale);
+    const tSpan = (tMax - tMin) || 1;
+    const t_val = tMin + u * tSpan;
+
+    // Inverse transform: solve for y from t
+    const dataY = this.tToY(t_val, yCenter, L0, logScale);
+
+    return { x: dataX, y: dataY };
+  }
+
+  /**
+   * Remove unused method onCanvasMouseMove - now using keydown handler instead
+   */
+
+  private weightedMedian(values: number[], weights: number[]): number {
+    const arr = values.map((v, i) => ({ v, w: weights[i] }))
+      .filter((a) => Number.isFinite(a.v) && Number.isFinite(a.w) && a.w > 0)
+      .sort((a, b) => a.v - b.v);
+    const total = arr.reduce((s, a) => s + a.w, 0);
+    let acc = 0;
+    for (const a of arr) {
+      acc += a.w;
+      if (acc >= 0.5 * total) return a.v;
+    }
+    return arr.length ? arr[arr.length - 1].v : NaN;
+  }
+
+  private weightedQuantile(values: number[], weights: number[], q: number): number {
+    const arr = values.map((v, i) => ({ v, w: weights[i] }))
+      .filter((a) => Number.isFinite(a.v) && Number.isFinite(a.w) && a.w > 0)
+      .sort((a, b) => a.v - b.v);
+    const total = arr.reduce((s, a) => s + a.w, 0);
+    const target = q * total;
+    let acc = 0;
+    for (const a of arr) {
+      acc += a.w;
+      if (acc >= target) return a.v;
+    }
+    return arr.length ? arr[arr.length - 1].v : NaN;
+  }
+
+  private yToT(y: number, yCenter: number, L0: number, logScale: number): number {
+    const d = y - yCenter;
+    const ad = Math.abs(d);
+    if (ad <= L0) return d;
+    return Math.sign(d) * (L0 + Math.log10(ad / L0) * logScale);
+  }
+
+  private tToY(t: number, yCenter: number, L0: number, logScale: number): number {
+    const sign = Math.sign(t);
+    const at = Math.abs(t);
+    if (at <= L0) return yCenter + t;
+    // Inverse: at = L0 + log10(|ad|/L0) * logScale => log10(|ad|/L0) = (at - L0) / logScale
+    const logArg = Math.pow(10, (at - L0) / logScale);
+    const ad = L0 * logArg;
+    return yCenter + sign * ad;
+  }
 
   render() {
     const { displayWidth, displayHeight, dpr } = resizeCanvasToDisplaySize(this.canvas);
@@ -338,10 +523,20 @@ export class CanvasPlot {
     const tickLen = 6;
     const fmt = (v: number, span: number) => {
       const absSpan = Math.abs(span);
-      if (absSpan >= 1e6) return v.toExponential(3);
+      // Large spans: readable formats
+      if (absSpan >= 1e6) {
+        return v.toExponential(3).replace(/e\+?/, "e");
+      }
       if (absSpan >= 1e3) return v.toFixed(2);
       if (absSpan >= 1) return v.toFixed(4);
-      return v.toExponential(3);
+
+      // Small values: use exponential notation, but prefer compact form like "1e-18"
+      let s = v.toExponential(3);
+      // remove trailing zeros in mantissa (e.g. 1.000e-18 -> 1e-18)
+      s = s.replace(/\.0+(?=e)/, "");
+      // normalize exponent (remove + and leading zeros)
+      s = s.replace(/e\+?(-?)0*(\d+)/, (m, sign, digits) => `e${sign}${digits}`);
+      return s;
     };
   
     ctx.fillStyle = "#222";

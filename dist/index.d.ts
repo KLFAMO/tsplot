@@ -7,6 +7,7 @@ declare class CanvasPlot {
     private ro;
     private options;
     private data;
+    private lastMouseEvent;
     constructor(canvas: HTMLCanvasElement, options?: CanvasPlotOptions);
     setOptions(partial: CanvasPlotOptions): void;
     setData(raw: unknown): void;
@@ -24,6 +25,24 @@ declare class CanvasPlot {
      * Attach a button to trigger loading data. `urlProvider` should return the URL to fetch.
      * Optional `statusEl` will receive simple status messages.
      */
+    /**
+     * Enable cursor tracking: when 'v' key is pressed, log plot coordinates at current cursor position.
+     * This helps inspect data values at specific points. Logs to console.debug.
+     */
+    enableCursorTracking(enabled?: boolean): void;
+    private onKeyDown;
+    /**
+     * Convert screen pixel coordinates (from MouseEvent) to plot data units (x, y).
+     * Returns null if no data is loaded or click is outside plot area.
+     */
+    private getPlotCoordinatesFromEvent;
+    /**
+     * Remove unused method onCanvasMouseMove - now using keydown handler instead
+     */
+    private weightedMedian;
+    private weightedQuantile;
+    private yToT;
+    private tToY;
     render(): void;
     destroy(): void;
 }

@@ -1,7 +1,6 @@
 // tsplot/src/core/CanvasPlot.ts
 
 import { resizeCanvasToDisplaySize } from "./resize";
-// [NEW]
 import { parseTimandaTsplotJson } from "../data/parse";
 import type { TimandaMtsV1 } from "../data/timanda_schema";
 
@@ -13,11 +12,10 @@ export class CanvasPlot {
   private canvas: HTMLCanvasElement;
   private ctx: CanvasRenderingContext2D;
   private ro: ResizeObserver | null = null;
-
   private options: Required<CanvasPlotOptions>;
-
-  // [NEW] Trzymamy pełne dane z timandy w bibliotece, nie w window ani w aplikacji
   private data: TimandaMtsV1 | null = null;
+  private f = 0;
+  private t = 0;
 
   // Track last mouse event for 'v' key handler
   private lastMouseEvent: MouseEvent | null = null;
@@ -38,7 +36,6 @@ export class CanvasPlot {
     this.ro = new ResizeObserver(() => this.render());
     this.ro.observe(this.canvas);
 
-    // Enable cursor tracking by default: press 'v' to log plot coordinates
     this.enableCursorTracking(true);
 
     this.render();
@@ -49,13 +46,10 @@ export class CanvasPlot {
     this.render();
   }
 
-  // [NEW] Publiczne API do podania pełnego JSON-a timandy
+  // Publiczne API do podania pełnego JSON-a timandy
   setData(raw: unknown) {
     const parsed = parseTimandaTsplotJson(raw);
-
-    // W tym momencie obsługujemy tylko MTS v1
     this.data = parsed as TimandaMtsV1;
-
     this.render();
   }
 
@@ -100,10 +94,16 @@ export class CanvasPlot {
   }
 
   private onKeyDown(evt: KeyboardEvent): void {
-    if (evt.key.toLowerCase() === "v" && this.lastMouseEvent) {
+    if (evt.key.toLowerCase() === "f" && this.lastMouseEvent) {
       const coords = this.getPlotCoordinatesFromEvent(this.lastMouseEvent);
       if (coords) {
-        console.debug(`tsplot cursor [v]: x=${coords.x.toFixed(6)}, y=${coords.y.toFixed(6)}`);
+        console.debug(`tsplot cursor [f]: x=${coords.x.toFixed(6)}, y=${coords.y.toFixed(6)}`);
+      }
+    }
+    if (evt.key.toLowerCase() === "t" && this.lastMouseEvent) {
+      const coords = this.getPlotCoordinatesFromEvent(this.lastMouseEvent);
+      if (coords) {
+        console.debug(`tsplot cursor [t]: x=${coords.x.toFixed(6)}, y=${coords.y.toFixed(6)}`);
       }
     }
   }

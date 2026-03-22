@@ -57,8 +57,9 @@ var CanvasPlot = class _CanvasPlot {
   ctx;
   ro = null;
   options;
-  // [NEW] Trzymamy pełne dane z timandy w bibliotece, nie w window ani w aplikacji
   data = null;
+  f = 0;
+  t = 0;
   // Track last mouse event for 'v' key handler
   lastMouseEvent = null;
   constructor(canvas, options = {}) {
@@ -80,7 +81,7 @@ var CanvasPlot = class _CanvasPlot {
     this.options = { ...this.options, ...partial };
     this.render();
   }
-  // [NEW] Publiczne API do podania pełnego JSON-a timandy
+  // Publiczne API do podania pełnego JSON-a timandy
   setData(raw) {
     const parsed = parseTimandaTsplotJson(raw);
     this.data = parsed;
@@ -123,10 +124,16 @@ var CanvasPlot = class _CanvasPlot {
     }
   }
   onKeyDown(evt) {
-    if (evt.key.toLowerCase() === "v" && this.lastMouseEvent) {
+    if (evt.key.toLowerCase() === "f" && this.lastMouseEvent) {
       const coords = this.getPlotCoordinatesFromEvent(this.lastMouseEvent);
       if (coords) {
-        console.debug(`tsplot cursor [v]: x=${coords.x.toFixed(6)}, y=${coords.y.toFixed(6)}`);
+        console.debug(`tsplot cursor [f]: x=${coords.x.toFixed(6)}, y=${coords.y.toFixed(6)}`);
+      }
+    }
+    if (evt.key.toLowerCase() === "t" && this.lastMouseEvent) {
+      const coords = this.getPlotCoordinatesFromEvent(this.lastMouseEvent);
+      if (coords) {
+        console.debug(`tsplot cursor [t]: x=${coords.x.toFixed(6)}, y=${coords.y.toFixed(6)}`);
       }
     }
   }

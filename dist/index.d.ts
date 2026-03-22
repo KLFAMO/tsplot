@@ -7,6 +7,8 @@ declare class CanvasPlot {
     private ro;
     private options;
     private data;
+    private f;
+    private t;
     private lastMouseEvent;
     constructor(canvas: HTMLCanvasElement, options?: CanvasPlotOptions);
     setOptions(partial: CanvasPlotOptions): void;
